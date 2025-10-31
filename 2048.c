@@ -6,6 +6,8 @@
 #include <storage/storage.h>
 #include <time.h>
 
+typedef enum { STOPPED = 0, RUNNING = 1, GAMEOVER = 2 } State;
+
 typedef struct {
   unsigned int highscore;
   unsigned int highblock;
@@ -14,11 +16,13 @@ typedef struct {
 typedef struct {
   int grid[4][4];
   unsigned int score;
-  int running;
+  State state;
   Records records;
 } GameState;
 
 int check_gameover(GameState *);
+
+ViewPort *viewport;
 
 unsigned int get_highest(GameState *gs) {
   unsigned int highest = 0;
@@ -29,31 +33,24 @@ unsigned int get_highest(GameState *gs) {
   return highest;
 }
 
-void update_gamestate(GameState *state) {
-  if (!state)
+void update_gamestate(GameState *gs) {
+  if (!gs)
     return;
 
-  int full = 1;
-  for (int i = 0; i < 16; i++) {
-    if (state->grid[i / 4][i % 4] == -1) {
-      full = 0;
-      break;
-    }
-  }
-  if (full) {
-    state->running = 0;
+  if (check_gameover(gs)) {
+    gs->state = GAMEOVER;
     return;
   }
 
   int new;
   do {
     new = rand() % 16;
-  } while (state->grid[new / 4][new % 4] != -1);
-  state->grid[new / 4][new % 4] = rand() % 2;
-  if (state->score > state->records.highscore)
-    state->records.highscore = state->score;
-  if (get_highest(state) > state->records.highblock)
-    state->records.highblock = get_highest(state);
+  } while (gs->grid[new / 4][new % 4] != -1);
+  gs->grid[new / 4][new % 4] = rand() % 2;
+  if (gs->score > gs->records.highscore)
+    gs->records.highscore = gs->score;
+  if (get_highest(gs) > gs->records.highblock)
+    gs->records.highblock = get_highest(gs);
 }
 
 static int handle_left_shift(GameState *gs) {
@@ -125,30 +122,27 @@ static int handle_right_shift(GameState *gs) {
 static int handle_up_shift(GameState *gs) {
   int res = 0;
   for (int i = 0; i < 4; i++) {
+    /* Two passes, the first combines all adjacent and alike blocks *
+     * The second pass moves all blocks as far left as possible     */
+
+    /* Pass 1: */
+    for (int j = 0; j < 3; j++) {
+      int curr = gs->grid[j][i];
+      if (curr >= 0 && gs->grid[j + 1][i] == curr) {
+        gs->grid[j][i]++;
+        gs->grid[j + 1][i] = -1;
+      }
+    }
+
+    /* Pass 2: */
+    int pos = 0;
     for (int j = 0; j < 4; j++) {
-      /* Handle non-empty cells */
       if (gs->grid[j][i] >= 0) {
-        for (int k = i; k > 0; k--) {
-          /* If it's empty, just shift it over */
-          if (gs->grid[j][k - 1] == -1) {
-            gs->grid[j][k - 1] = gs->grid[j][k];
-            gs->grid[j][k] = -1;
-            res = 1;
-          }
-          /* Collision cases */
-          else {
-            /* Combine blocks if they're the same value */
-            if (gs->grid[j][k - 1] == gs->grid[j][k]) {
-              gs->grid[j][k - 1]++;
-              gs->grid[j][k] = -1;
-              /* Preserves 2048-like scoring even with the display differences
-               */
-              gs->score += (1 << gs->grid[j][k - 1]);
-              res = 1;
-            }
-            break;
-          }
+        if (j > pos) {
+          gs->grid[pos][i] = gs->grid[j][i];
+          gs->grid[j][i] = -1;
         }
+        pos++;
       }
     }
   }
@@ -208,7 +202,7 @@ static void input_callback(InputEvent *event, void *ctx) {
       update = handle_right_shift(gs);
       break;
     case InputKeyBack:
-      gs->running = 0;
+      gs->state = STOPPED;
       break;
     default:
       break;
@@ -217,13 +211,30 @@ static void input_callback(InputEvent *event, void *ctx) {
   if (update)
     update_gamestate(gs);
   if (check_gameover(gs))
-    gs->running = 0;
+    gs->state = GAMEOVER;
+}
+
+void draw_gameover(Canvas *canvas, GameState *state) {
+  UNUSED(state);
+  canvas_clear(canvas);
+  canvas_draw_str(canvas, 45, 14, "Game Over.");
+
+  char buff[32] = "";
+  snprintf(buff, sizeof(buff), "Score: %d", state->score);
+  canvas_draw_str(canvas, 34, 42, buff);
 }
 
 static void draw_callback(Canvas *canvas, void *ctx) {
   UNUSED(ctx);
   canvas_clear(canvas);
   GameState *gs = ctx;
+  if (gs->state == GAMEOVER) {
+    draw_gameover(canvas, gs);
+    view_port_update(viewport);
+    furi_delay_ms(2000);
+    gs->state = STOPPED;
+    return;
+  }
 
   /* Draw the grid */
   for (int i = 0; i < 4; i++) {
@@ -315,7 +326,7 @@ void init_gamestate(GameState *state) {
       state->grid[i / 4][i % 4] = -1;
     }
   }
-  state->running = 1;
+  state->state = RUNNING;
   state->score = 0;
   state->records.highscore = 0;
   state->records.highblock = 1;
@@ -367,7 +378,7 @@ int32_t app_2048(void *p) {
   Gui *gui = furi_record_open(RECORD_GUI);
 
   /* Create ViewPort */
-  ViewPort *viewport = view_port_alloc();
+  viewport = view_port_alloc();
 
   /* Initialize random initial game state */
   GameState init;
@@ -381,14 +392,13 @@ int32_t app_2048(void *p) {
   gui_add_view_port(gui, viewport, GuiLayerFullscreen);
 
   /* Keep running until user closes app */
-  while (init.running) {
-    view_port_update(viewport);
+  while (init.state != STOPPED) {
+    if (init.state != GAMEOVER)
+      view_port_update(viewport);
     furi_delay_ms(50);
   }
 
   save_records(&init);
-
-  furi_delay_ms(2500);
 
   /* Clean up */
   gui_remove_view_port(gui, viewport);
