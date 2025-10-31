@@ -1,0 +1,10 @@
+App(
+name="2048",
+apptype=FlipperAppType.EXTERNAL,
+entry_point="app_2048",
+requires=["gui"],
+stack_size=2 * 1024,
+fap_description="Classic 2048",
+fap_category="Games",
+appid="2048",
+)
