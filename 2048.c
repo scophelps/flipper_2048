@@ -53,34 +53,50 @@ void update_gamestate(GameState *gs) {
     gs->records.highblock = get_highest(gs);
 }
 
+static int combine(int *arr, int *score) {
+  *score = 0;
+  int res = 0;
+  for (int i = 0; i < 3; i++) {
+    if (arr[i] == -1)
+      continue;
+    for (int j = i + 1; j < 4; j++) {
+      if (arr[j] == -1)
+        continue;
+      if (arr[i] == arr[j]) {
+        arr[i]++;
+        arr[j] = -1;
+        *score += 1 << arr[i];
+        res = 1;
+      }
+      break;
+    }
+  }
+  int move = 0;
+  while (arr[move] != -1)
+    move++;
+  for (int i = move + 1; i < 4; i++) {
+    if (arr[i] != -1) {
+      arr[move] = arr[i];
+      arr[i] = -1;
+      res = 1;
+      move++;
+    }
+  }
+  return res;
+}
+
 static int handle_left_shift(GameState *gs) {
   int res = 0;
   for (int i = 0; i < 4; i++) {
+    int temp[4] = {0};
+    int score = 0;
+    for (int j = 0; j < 4; j++)
+      temp[j] = gs->grid[j][i];
+
+    res |= combine(temp, &score);
+    gs->score += score;
     for (int j = 0; j < 4; j++) {
-      /* Handle non-empty cells */
-      if (gs->grid[i][j] >= 0) {
-        for (int k = i; k > 0; k--) {
-          /* If it's empty, just shift it over */
-          if (gs->grid[k - 1][j] == -1) {
-            gs->grid[k - 1][j] = gs->grid[k][j];
-            gs->grid[k][j] = -1;
-            res = 1;
-          }
-          /* Collision cases */
-          else {
-            /* Combine blocks if they're the same value */
-            if (gs->grid[k - 1][j] == gs->grid[k][j]) {
-              gs->grid[k - 1][j]++;
-              gs->grid[k][j] = -1;
-              /* Preserves 2048-like scoring even with the display differences
-               */
-              gs->score += (1 << gs->grid[k - 1][j]);
-              res = 1;
-            }
-            break;
-          }
-        }
-      }
+      gs->grid[j][i] = temp[j];
     }
   }
   return res;
@@ -88,32 +104,16 @@ static int handle_left_shift(GameState *gs) {
 
 static int handle_right_shift(GameState *gs) {
   int res = 0;
-  for (int i = 3; i >= 0; i--) {
-    for (int j = 0; j < 4; j++) {
-      /* Handle non-empty cells */
-      if (gs->grid[i][j] >= 0) {
-        for (int k = i; k < 3; k++) {
-          /* If it's empty, just shift it over */
-          if (gs->grid[k + 1][j] == -1) {
-            gs->grid[k + 1][j] = gs->grid[k][j];
-            gs->grid[k][j] = -1;
-            res = 1;
-          }
-          /* Collision cases */
-          else {
-            /* Combine blocks if they're the same value */
-            if (gs->grid[k + 1][j] == gs->grid[k][j]) {
-              gs->grid[k + 1][j]++;
-              gs->grid[k][j] = -1;
-              /* Preserves 2048-like scoring even with the display differences
-               */
-              gs->score += (1 << gs->grid[k + 1][j]);
-              res = 1;
-            }
-            break;
-          }
-        }
-      }
+  for (int i = 0; i < 4; i++) {
+    int temp[4] = {0};
+    int score = 0;
+    for (int j = 3; j >= 0; j--)
+      temp[3 - j] = gs->grid[j][i];
+
+    res |= combine(temp, &score);
+    gs->score += score;
+    for (int j = 3; j >= 0; j--) {
+      gs->grid[j][i] = temp[3 - j];
     }
   }
   return res;
@@ -122,28 +122,15 @@ static int handle_right_shift(GameState *gs) {
 static int handle_up_shift(GameState *gs) {
   int res = 0;
   for (int i = 0; i < 4; i++) {
-    /* Two passes, the first combines all adjacent and alike blocks *
-     * The second pass moves all blocks as far left as possible     */
+    int temp[4] = {0};
+    int score = 0;
+    for (int j = 0; j < 4; j++)
+      temp[j] = gs->grid[i][j];
 
-    /* Pass 1: */
-    for (int j = 0; j < 3; j++) {
-      int curr = gs->grid[j][i];
-      if (curr >= 0 && gs->grid[j + 1][i] == curr) {
-        gs->grid[j][i]++;
-        gs->grid[j + 1][i] = -1;
-      }
-    }
-
-    /* Pass 2: */
-    int pos = 0;
+    res |= combine(temp, &score);
+    gs->score += score;
     for (int j = 0; j < 4; j++) {
-      if (gs->grid[j][i] >= 0) {
-        if (j > pos) {
-          gs->grid[pos][i] = gs->grid[j][i];
-          gs->grid[j][i] = -1;
-        }
-        pos++;
-      }
+      gs->grid[i][j] = temp[j];
     }
   }
   return res;
@@ -151,32 +138,16 @@ static int handle_up_shift(GameState *gs) {
 
 static int handle_down_shift(GameState *gs) {
   int res = 0;
-  for (int i = 3; i >= 0; i--) {
+  for (int i = 0; i < 4; i++) {
+    int temp[4] = {0};
+    int score = 0;
+    for (int j = 0; j < 4; j++)
+      temp[j] = gs->grid[i][3 - j];
+
+    res |= combine(temp, &score);
+    gs->score += score;
     for (int j = 0; j < 4; j++) {
-      /* Handle non-empty cells */
-      if (gs->grid[j][i] >= 0) {
-        for (int k = i; k < 3; k++) {
-          /* If it's empty, just shift it over */
-          if (gs->grid[j][k + 1] == -1) {
-            gs->grid[j][k + 1] = gs->grid[j][k];
-            gs->grid[j][k] = -1;
-            res = 1;
-          }
-          /* Collision cases */
-          else {
-            /* Combine blocks if they're the same value */
-            if (gs->grid[j][k + 1] == gs->grid[j][k]) {
-              gs->grid[j][k + 1]++;
-              gs->grid[j][k] = -1;
-              /* Preserves 2048-like scoring even with the display differences
-               */
-              gs->score += (1 << gs->grid[j][k + 1]);
-              res = 1;
-            }
-            break;
-          }
-        }
-      }
+      gs->grid[i][3 - j] = temp[j];
     }
   }
   return res;
