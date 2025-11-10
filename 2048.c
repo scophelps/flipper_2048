@@ -6,6 +6,10 @@
 #include <storage/storage.h>
 #include <time.h>
 
+#define SCREEN_HEIGHT 64
+#define SCREEN_WIDTH 128
+#define TEXT_HEIGHT 7
+
 typedef enum { STOPPED = 0, RUNNING = 1, GAMEOVER = 2 } State;
 
 typedef struct {
@@ -21,6 +25,8 @@ typedef struct {
 } GameState;
 
 int check_gameover(GameState *);
+
+void save_records(GameState *);
 
 ViewPort *viewport;
 
@@ -47,10 +53,17 @@ void update_gamestate(GameState *gs) {
     new = rand() % 16;
   } while (gs->grid[new / 4][new % 4] != -1);
   gs->grid[new / 4][new % 4] = rand() % 2;
-  if (gs->score > gs->records.highscore)
+  int pb = 0;
+  if (gs->score > gs->records.highscore) {
     gs->records.highscore = gs->score;
-  if (get_highest(gs) > gs->records.highblock)
+    pb = 1;
+  }
+  if (get_highest(gs) > gs->records.highblock) {
     gs->records.highblock = get_highest(gs);
+    pb = 1;
+  }
+  if (pb)
+    save_records(gs);
 }
 
 static int combine(int *arr, int *score) {
@@ -173,8 +186,9 @@ static void input_callback(InputEvent *event, void *ctx) {
       update = handle_right_shift(gs);
       break;
     case InputKeyBack:
-      gs->state = STOPPED;
-      break;
+      gs->state = GAMEOVER;
+      view_port_update(viewport);
+      return;
     default:
       break;
     }
@@ -185,14 +199,22 @@ static void input_callback(InputEvent *event, void *ctx) {
     gs->state = GAMEOVER;
 }
 
+#define GAMEOVER_TEXT "Game Over."
+#define GAMEOVER_X                                                             \
+  (SCREEN_WIDTH / 2 - ((sizeof(GAMEOVER_TEXT) - 1) * 5 - 1) / 2)
+#define GAMEOVER_Y (SCREEN_HEIGHT / 2 - TEXT_HEIGHT + 2)
+
 void draw_gameover(Canvas *canvas, GameState *state) {
   UNUSED(state);
   canvas_clear(canvas);
-  canvas_draw_str(canvas, 45, 14, "Game Over.");
+  canvas_draw_str(canvas, GAMEOVER_X, GAMEOVER_Y, GAMEOVER_TEXT);
 
   char buff[32] = "";
   snprintf(buff, sizeof(buff), "Score: %d", state->score);
-  canvas_draw_str(canvas, 34, 42, buff);
+  int32_t score_x = 0, score_y = 42;
+  score_x = (SCREEN_WIDTH / 2) - (strlen(buff) * 5 - 1) / 2;
+  score_y = (SCREEN_HEIGHT / 2) + TEXT_HEIGHT;
+  canvas_draw_str(canvas, score_x, score_y, buff);
 }
 
 static void draw_callback(Canvas *canvas, void *ctx) {
@@ -201,9 +223,6 @@ static void draw_callback(Canvas *canvas, void *ctx) {
   GameState *gs = ctx;
   if (gs->state == GAMEOVER) {
     draw_gameover(canvas, gs);
-    view_port_update(viewport);
-    furi_delay_ms(2000);
-    gs->state = STOPPED;
     return;
   }
 
@@ -243,7 +262,7 @@ static void draw_callback(Canvas *canvas, void *ctx) {
   memset(buff, 0, sizeof(buff));
 
   /* Draw high score */
-  snprintf(buff, sizeof(buff), "HScore: %d", gs->records.highscore);
+  snprintf(buff, sizeof(buff), "PB: %d", gs->records.highscore);
   canvas_draw_str(canvas, 67, 30, buff);
 
   /* Draw high block */
@@ -279,24 +298,13 @@ void save_records(GameState *state) {
 
 void init_gamestate(GameState *state) {
   UNUSED(state);
-  uint32_t idxs[2];
-  idxs[0] = rand() % 16;
-  do {
-    idxs[1] = rand() % 16;
-  } while (idxs[1] == idxs[0]);
-
-  for (uint32_t i = 0; i < 16; i++) {
-    if (i == idxs[0] || i == idxs[1]) {
-      int is_1 = rand() % 2;
-      if (is_1) {
-        state->grid[i / 4][i % 4] = 1;
-      } else {
-        state->grid[i / 4][i % 4] = 0;
-      }
-    } else {
-      state->grid[i / 4][i % 4] = -1;
-    }
+  /* Fills two random cells with a 1 or 2 */
+  for (int i = 0; i < 16; i++) {
+    state->grid[i / 4][i % 4] = -1;
   }
+  /* Each call adds a single new random cell */
+  update_gamestate(state);
+  update_gamestate(state);
   state->state = RUNNING;
   state->score = 0;
   state->records.highscore = 0;
@@ -364,9 +372,12 @@ int32_t app_2048(void *p) {
 
   /* Keep running until user closes app */
   while (init.state != STOPPED) {
-    if (init.state != GAMEOVER)
-      view_port_update(viewport);
+    view_port_update(viewport);
     furi_delay_ms(50);
+    if (init.state == GAMEOVER) {
+      furi_delay_ms(1950);
+      init.state = STOPPED;
+    }
   }
 
   save_records(&init);
