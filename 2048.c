@@ -10,7 +10,7 @@
 #define SCREEN_WIDTH 128
 #define TEXT_HEIGHT 7
 
-typedef enum { STOPPED = 0, RUNNING = 1, GAMEOVER = 2 } State;
+typedef enum { RUNNING = 0, GAMEOVER = 1, STOPPED = 2 } State;
 
 typedef struct {
   unsigned int highscore;
@@ -187,7 +187,6 @@ static void input_callback(InputEvent *event, void *ctx) {
       break;
     case InputKeyBack:
       gs->state = GAMEOVER;
-      view_port_update(viewport);
       return;
     default:
       break;
@@ -217,15 +216,7 @@ void draw_gameover(Canvas *canvas, GameState *state) {
   canvas_draw_str(canvas, score_x, score_y, buff);
 }
 
-static void draw_callback(Canvas *canvas, void *ctx) {
-  UNUSED(ctx);
-  canvas_clear(canvas);
-  GameState *gs = ctx;
-  if (gs->state == GAMEOVER) {
-    draw_gameover(canvas, gs);
-    return;
-  }
-
+static void draw_game(Canvas *canvas, GameState *gs) {
   /* Draw the grid */
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
@@ -250,24 +241,42 @@ static void draw_callback(Canvas *canvas, void *ctx) {
   canvas_draw_frame(canvas, 63, 0, 65, 64);
 
   /* Draw current score */
-  char buff[32] = "";
-  snprintf(buff, sizeof(buff), "Score: %d", gs->score);
-  canvas_draw_str(canvas, 67, 10, buff);
+  static char buff[32];
   memset(buff, 0, sizeof(buff));
+  snprintf(buff, sizeof(buff), "Score: %u", gs->score);
+  canvas_draw_str(canvas, 67, 10, buff);
 
   /* Draw highest block */
-  unsigned int highest = get_highest(gs);
-  snprintf(buff, sizeof(buff), "Highest: %d", 1 << highest);
-  canvas_draw_str(canvas, 67, 20, buff);
   memset(buff, 0, sizeof(buff));
+  unsigned int highest = get_highest(gs);
+  snprintf(buff, sizeof(buff), "Highest: %u", 1 << highest);
+  canvas_draw_str(canvas, 67, 20, buff);
 
   /* Draw high score */
-  snprintf(buff, sizeof(buff), "PB: %d", gs->records.highscore);
+  memset(buff, 0, sizeof(buff));
+  snprintf(buff, sizeof(buff), "PB: %u", gs->records.highscore);
   canvas_draw_str(canvas, 67, 30, buff);
 
   /* Draw high block */
-  snprintf(buff, sizeof(buff), "HBlock: %d", 1 << gs->records.highblock);
+  memset(buff, 0, sizeof(buff));
+  snprintf(buff, sizeof(buff), "HBlock: %u", 1 << gs->records.highblock);
   canvas_draw_str(canvas, 67, 40, buff);
+}
+
+static void draw_callback(Canvas *canvas, void *ctx) {
+  UNUSED(ctx);
+  canvas_clear(canvas);
+  GameState *gs = ctx;
+  switch (gs->state) {
+  case RUNNING:
+    draw_game(canvas, gs);
+    break;
+  case GAMEOVER:
+    draw_gameover(canvas, gs);
+    break;
+  default:
+    break;
+  }
 }
 
 void init_records(GameState *state) {
@@ -302,13 +311,14 @@ void init_gamestate(GameState *state) {
   for (int i = 0; i < 16; i++) {
     state->grid[i / 4][i % 4] = -1;
   }
-  /* Each call adds a single new random cell */
-  update_gamestate(state);
-  update_gamestate(state);
   state->state = RUNNING;
   state->score = 0;
   state->records.highscore = 0;
   state->records.highblock = 1;
+
+  /* Add two random cells to the board */
+  update_gamestate(state);
+  update_gamestate(state);
   init_records(state);
 }
 
@@ -372,15 +382,19 @@ int32_t app_2048(void *p) {
 
   /* Keep running until user closes app */
   while (init.state != STOPPED) {
-    view_port_update(viewport);
-    furi_delay_ms(50);
     if (init.state == GAMEOVER) {
-      furi_delay_ms(1950);
-      init.state = STOPPED;
+      init.state = RUNNING;
+      view_port_update(viewport);
+      furi_delay_ms(2000);
+      init.state = GAMEOVER;
+      view_port_update(viewport);
+      furi_delay_ms(2000);
+      break;
+    } else {
+      view_port_update(viewport);
+      furi_delay_ms(50);
     }
   }
-
-  save_records(&init);
 
   /* Clean up */
   gui_remove_view_port(gui, viewport);
